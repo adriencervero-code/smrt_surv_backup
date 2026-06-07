@@ -8,7 +8,7 @@ from ultralytics import YOLO
 # ─────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────
-N8N_WEBHOOK = "http://localhost:5678/webhook-test/detection"
+N8N_WEBHOOK = "http://localhost:5678/webhook/detection"
 
 MODEL_PHONE  = "best_v1.pt"   # détecte les téléphones
 MODEL_PERSON = "yolov8n.pt"   # détecte les personnes (classe "person" uniquement)
