@@ -1,19 +1,14 @@
 import cv2
 import math
 import time
-import os
 import requests
 from collections import deque
-from dotenv import load_dotenv
 from ultralytics import YOLO
-
-load_dotenv()
 
 # ─────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+N8N_WEBHOOK = "http://localhost:5678/webhook-test/detection"
 
 MODEL_PHONE  = "best_v1.pt"   # détecte les téléphones
 MODEL_PERSON = "yolov8n.pt"   # détecte les personnes (classe "person" uniquement)
@@ -30,19 +25,22 @@ DETECTION_DURATION = 3.0      # secondes de détection requises dans la fenêtre
 COOLDOWN           = 30       # secondes entre deux alertes Telegram
 
 # ─────────────────────────────────────────────
-# FONCTION TELEGRAM
+# ENVOI VIA N8N
 # ─────────────────────────────────────────────
 def send_telegram(message: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    payload = {
+        "message":   message,
+        "timestamp": time.strftime("%H:%M:%S"),
+        "model":     MODEL_PHONE,
+    }
     try:
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(N8N_WEBHOOK, json=payload, timeout=5)
         if response.status_code == 200:
-            print(f"[Telegram] Message envoyé : {message}")
+            print(f"[n8n] Données envoyées avec succès")
         else:
-            print(f"[Telegram] Erreur : {response.text}")
+            print(f"[n8n] Erreur : {response.status_code}")
     except Exception as e:
-        print(f"[Telegram] Connexion échouée : {e}")
+        print(f"[n8n] Connexion échouée : {e}")
 
 
 # ─────────────────────────────────────────────
