@@ -2,6 +2,7 @@ import cv2
 import time
 import os
 import requests
+from collections import deque
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
@@ -16,13 +17,15 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # Modèle à utiliser :
 # - "yolov8n.pt"  → modèle de base COCO (détecte cell phone nativement)
 # - "best_v1.pt" / "best_v2.pt" → modèles fine-tunés
-MODEL_PATH = "best_v1.pt"
+MODEL_PATH = "best_v2.pt"
 
 # Classe cible — laisser None pour auto-détecter depuis le modèle
 TARGET_CLASS = None
 
-# Durée de détection continue avant d'envoyer le message (en secondes)
-DETECTION_DURATION = 3
+# Fenêtre glissante : sur WINDOW secondes, si détecté >= DETECTION_DURATION → alerte
+# (résistant aux coupures brèves de détection)
+WINDOW = 5.0             # durée de la fenêtre glissante (secondes)
+DETECTION_DURATION = 3.0 # secondes de détection requises dans la fenêtre
 
 # Cooldown entre deux messages Telegram (en secondes) — évite le spam
 COOLDOWN = 30
@@ -50,14 +53,11 @@ def main():
     print(f"[Init] Chargement du modèle : {MODEL_PATH}")
     model = YOLO(MODEL_PATH)
 
-    # Récupère les classes disponibles dans le modèle chargé
     available_classes = list(model.names.values())
     print(f"[Init] Classes disponibles dans ce modèle : {available_classes}")
 
-    # Auto-détection de la classe cible si non spécifiée
     target = TARGET_CLASS
     if target is None:
-        # Préfère "cell phone" ou "phone" si présent, sinon prend la première classe
         for candidate in ["cell phone", "phone", "cellphone"]:
             if candidate in available_classes:
                 target = candidate
@@ -67,7 +67,6 @@ def main():
         print(f"[Init] Classe cible auto-détectée : '{target}'")
     elif target not in available_classes:
         print(f"[Attention] Classe '{target}' absente du modèle. Classes dispo : {available_classes}")
-        print(f"[Init] Utilisation de la première classe : '{available_classes[0]}'")
         target = available_classes[0]
     else:
         print(f"[Init] Classe cible : '{target}'")
@@ -79,7 +78,8 @@ def main():
 
     print("[Init] Webcam ouverte. Appuie sur 'q' pour quitter.")
 
-    detection_start = None
+    # Historique des frames : (timestamp, detected) sur les WINDOW dernières secondes
+    history = deque()
     last_alert_time = 0
     alert_sent = False
 
@@ -102,24 +102,30 @@ def main():
                 if class_name == target and confidence > 0.5:
                     detected = True
 
-        # ── Logique de déclenchement ──────────
+        # ── Fenêtre glissante ─────────────────
         now = time.time()
+        history.append((now, detected))
 
-        if detected:
-            if detection_start is None:
-                detection_start = now
+        # Supprime les entrées hors de la fenêtre
+        while history and now - history[0][0] > WINDOW:
+            history.popleft()
 
-            elapsed = now - detection_start
-            print(f"[Détection] '{target}' détecté depuis {elapsed:.1f}s", end="\r")
+        # Calcule le temps détecté dans la fenêtre en sommant les intervalles
+        detected_time = 0.0
+        for i in range(1, len(history)):
+            if history[i - 1][1]:  # si la frame précédente était détectée
+                detected_time += history[i][0] - history[i - 1][0]
 
-            if elapsed >= DETECTION_DURATION and not alert_sent:
-                if now - last_alert_time > COOLDOWN:
-                    send_telegram(f"Alerte : '{target}' détecté pendant {DETECTION_DURATION} secondes !")
-                    last_alert_time = now
-                    alert_sent = True
-
+        # ── Logique de déclenchement ──────────
+        if detected_time >= DETECTION_DURATION:
+            print(f"[Détection] '{target}' : {detected_time:.1f}s / {WINDOW}s  ", end="\r")
+            if not alert_sent and now - last_alert_time > COOLDOWN:
+                send_telegram(f"Alerte : '{target}' détecté {detected_time:.1f}s sur les {WINDOW}s !")
+                last_alert_time = now
+                alert_sent = True
         else:
-            detection_start = None
+            if detected_time > 0:
+                print(f"[Suivi]     '{target}' : {detected_time:.1f}s / {DETECTION_DURATION}s requis  ", end="\r")
             alert_sent = False
 
         # ── Affichage ─────────────────────────
@@ -128,6 +134,9 @@ def main():
         color = (0, 0, 255) if detected else (0, 255, 0)
         cv2.putText(annotated, status, (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2)
+        # Affiche le compteur de temps détecté sur le feed vidéo
+        cv2.putText(annotated, f"{detected_time:.1f}s / {DETECTION_DURATION}s", (20, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         cv2.imshow("DCP — Detection", annotated)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
